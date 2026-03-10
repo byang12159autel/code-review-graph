@@ -17,6 +17,10 @@ Claude Code re-reads your entire codebase on every task. `code-review-graph` fix
 
 Benchmarked on three production open-source projects: **6.8x fewer tokens for code reviews, up to 49x fewer tokens for coding tasks.**
 
+<p align="center">
+  <img src="docs/assets/marketing-diagram.png" alt="code-review-graph architecture overview" width="100%" />
+</p>
+
 ## Installation
 
 **Claude Code Plugin** (recommended)
