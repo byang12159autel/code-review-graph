@@ -33,7 +33,7 @@ MIT license. 100% local. No telemetry. DB file: .code-review-graph/graph.db
 
 <section name="watch">
 Run: code-review-graph watch (auto-updates graph on file save via watchdog)
-Or use PostEdit/PostGit hooks for automatic background updates.
+Or use PostToolUse (Write|Edit|Bash) hooks for automatic background updates.
 </section>
 
 <section name="embeddings">

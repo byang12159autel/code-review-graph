@@ -68,7 +68,7 @@
 - **Impact-radius / blast-radius analysis** — BFS through call/import/inheritance graph
 - **6 MCP tools** for full graph interaction
 - **3 review-first skills**: build-graph, review-delta, review-pr
-- **PostEdit/PostGit hooks** for automatic background updates
+- **PostToolUse hooks** (Write|Edit|Bash) for automatic background updates
 - **FastMCP 3.0 compatible** stdio MCP server
 
 ## Privacy & Data

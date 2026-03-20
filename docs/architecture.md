@@ -11,8 +11,8 @@
 │                        Claude Code                           │
 │                                                              │
 │  Skills (SKILL.md)          Hooks (hooks.json)               │
-│  ├── build-graph            ├── PostEdit → incremental       │
-│  ├── review-delta           └── PostGit  → incremental       │
+│  ├── build-graph            └── PostToolUse (Write|Edit|Bash) │
+│  ├── review-delta                → incremental update         │
 │  └── review-pr                                               │
 │          │                        │                          │
 │          ▼                        ▼                          │
