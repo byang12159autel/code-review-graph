@@ -14,9 +14,12 @@ from .tools import (
     build_or_update_graph,
     embed_graph,
     find_large_functions,
+    get_affected_flows_func,
     get_docs_section,
+    get_flow,
     get_impact_radius,
     get_review_context,
+    list_flows,
     list_graph_stats,
     query_graph,
     semantic_search_nodes,
@@ -235,6 +238,78 @@ def find_large_functions_tool(
     return find_large_functions(
         min_lines=min_lines, kind=kind, file_path_pattern=file_path_pattern,
         limit=limit, repo_root=repo_root,
+    )
+
+
+@mcp.tool()
+def list_flows_tool(
+    sort_by: str = "criticality",
+    limit: int = 50,
+    kind: Optional[str] = None,
+    repo_root: Optional[str] = None,
+) -> dict:
+    """List execution flows in the codebase, sorted by criticality.
+
+    Each flow represents a call chain starting from an entry point
+    (HTTP handler, CLI command, test function, etc.). Use this to
+    understand the main execution paths through the codebase.
+
+    Args:
+        sort_by: Sort column: criticality, depth, node_count, file_count, or name.
+        limit: Maximum flows to return. Default: 50.
+        kind: Optional filter by entry point kind (e.g. "Test", "Function").
+        repo_root: Repository root path. Auto-detected if omitted.
+    """
+    return list_flows(
+        repo_root=repo_root, sort_by=sort_by, limit=limit, kind=kind,
+    )
+
+
+@mcp.tool()
+def get_flow_tool(
+    flow_id: Optional[int] = None,
+    flow_name: Optional[str] = None,
+    include_source: bool = False,
+    repo_root: Optional[str] = None,
+) -> dict:
+    """Get detailed information about a single execution flow.
+
+    Returns the full call path with each step's function name, file, and
+    line numbers. Optionally includes source code snippets for each step.
+
+    Provide either flow_id (from list_flows_tool) or flow_name to search by name.
+
+    Args:
+        flow_id: Database ID of the flow.
+        flow_name: Name to search for (partial match). Ignored if flow_id given.
+        include_source: Include source code snippets for each step. Default: False.
+        repo_root: Repository root path. Auto-detected if omitted.
+    """
+    return get_flow(
+        flow_id=flow_id, flow_name=flow_name,
+        include_source=include_source, repo_root=repo_root,
+    )
+
+
+@mcp.tool()
+def get_affected_flows_tool(
+    changed_files: Optional[list[str]] = None,
+    base: str = "HEAD~1",
+    repo_root: Optional[str] = None,
+) -> dict:
+    """Find execution flows affected by changed files.
+
+    Identifies which execution flows pass through nodes in the changed files.
+    Useful during code review to understand which user-facing or critical paths
+    are impacted by a change. Auto-detects changed files from git if not specified.
+
+    Args:
+        changed_files: List of changed file paths (relative to repo root). Auto-detected if omitted.
+        base: Git ref for auto-detecting changes. Default: HEAD~1.
+        repo_root: Repository root path. Auto-detected if omitted.
+    """
+    return get_affected_flows_func(
+        changed_files=changed_files, base=base, repo_root=repo_root,
     )
 
 
