@@ -12,8 +12,6 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
-LATEST_VERSION = 5
-
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
     """Read the current schema version from the metadata table.
@@ -55,7 +53,7 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
         "AND name = ?",
         (table,),
     ).fetchone()
-    return (row[0] if isinstance(row, (tuple, list)) else row[0]) > 0
+    return row[0] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +92,15 @@ def _migrate_v3(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (flow_id, node_id)
         )
     """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_flows_criticality ON flows(criticality DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_flows_entry ON flows(entry_point_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_flow_memberships_node ON flow_memberships(node_id)"
+    )
     logger.info("Migration v3: created flows and flow_memberships tables")
 
 
@@ -115,6 +122,15 @@ def _migrate_v4(conn: sqlite3.Connection) -> None:
     if not _has_column(conn, "nodes", "community_id"):
         conn.execute("ALTER TABLE nodes ADD COLUMN community_id INTEGER")
         logger.info("Migration v4: added 'community_id' column to nodes")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_nodes_community ON nodes(community_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_communities_parent ON communities(parent_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_communities_cohesion ON communities(cohesion DESC)"
+    )
     logger.info("Migration v4: created communities table")
 
 
@@ -141,6 +157,8 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_v4,
     5: _migrate_v5,
 }
+
+LATEST_VERSION = max(MIGRATIONS.keys())
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:
