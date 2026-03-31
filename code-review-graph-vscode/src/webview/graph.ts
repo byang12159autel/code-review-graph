@@ -85,6 +85,21 @@ const NODE_COLOR: Record<NodeKind, string> = {
   Type: "#8b949e",
 };
 
+const NODE_SHAPE: Record<NodeKind, d3.SymbolType> = {
+  File: d3.symbolCircle,
+  Class: d3.symbolSquare,
+  Function: d3.symbolTriangle,
+  Test: d3.symbolDiamond,
+  Type: d3.symbolCross,
+};
+
+function shapeSize(kind: NodeKind): number {
+  const r = NODE_RADIUS[kind] ?? 10;
+  return Math.PI * r * r;
+}
+
+const symbolGen = d3.symbol();
+
 const EDGE_COLOR: Record<EdgeKind, string> = {
   CALLS: "#3fb950",
   IMPORTS_FROM: "#f0883e",
@@ -128,7 +143,7 @@ let labelGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
 let zoomBehavior: d3.ZoomBehavior<SVGSVGElement, unknown>;
 
 let linkSelection: d3.Selection<SVGLineElement, SimLink, SVGGElement, unknown>;
-let nodeSelection: d3.Selection<SVGCircleElement, SimNode, SVGGElement, unknown>;
+let nodeSelection: d3.Selection<SVGPathElement, SimNode, SVGGElement, unknown>;
 let labelSelection: d3.Selection<SVGTextElement, SimNode, SVGGElement, unknown>;
 
 let currentTheme: "dark" | "light" = "dark";
@@ -185,7 +200,7 @@ function createSvg(): void {
 
   // Initialize empty selections
   linkSelection = linkGroup.selectAll<SVGLineElement, SimLink>("line");
-  nodeSelection = nodeGroup.selectAll<SVGCircleElement, SimNode>("circle");
+  nodeSelection = nodeGroup.selectAll<SVGPathElement, SimNode>("path");
   labelSelection = labelGroup.selectAll<SVGTextElement, SimNode>("text");
 
   // Zoom + pan
@@ -370,10 +385,10 @@ function buildGraph(): void {
 
   // --- Nodes ---
   nodeSelection = nodeGroup
-    .selectAll<SVGCircleElement, SimNode>("circle")
+    .selectAll<SVGPathElement, SimNode>("path")
     .data(nodes, (d) => d.qualifiedName)
-    .join("circle")
-    .attr("r", (d) => NODE_RADIUS[d.kind] ?? 10)
+    .join("path")
+    .attr("d", (d) => symbolGen.type(NODE_SHAPE[d.kind] ?? d3.symbolCircle).size(shapeSize(d.kind))()!)
     .attr("fill", (d) => NODE_COLOR[d.kind] ?? "#cdd6f4")
     .attr("stroke", "none")
     .attr("stroke-width", 2)
@@ -408,7 +423,7 @@ function buildGraph(): void {
     })
     .call(
       d3
-        .drag<SVGCircleElement, SimNode>()
+        .drag<SVGPathElement, SimNode>()
         .on("start", (event, d) => {
           if (!event.active) simulation?.alphaTarget(0.3).restart();
           d.fx = d.x;
@@ -487,7 +502,7 @@ function buildGraph(): void {
         .attr("x2", (d) => (d.target as SimNode).x!)
         .attr("y2", (d) => (d.target as SimNode).y!);
 
-      nodeSelection.attr("cx", (d) => d.x!).attr("cy", (d) => d.y!);
+      nodeSelection.attr("transform", (d) => `translate(${d.x},${d.y})`);
 
       labelSelection.attr("x", (d) => d.x!).attr("y", (d) => d.y!);
     });

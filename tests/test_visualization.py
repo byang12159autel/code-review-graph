@@ -247,3 +247,17 @@ def test_generate_html_includes_interactive_features(store_with_data, tmp_path):
     assert "filter-panel" in content
     # Search results dropdown
     assert "search-results" in content
+
+
+def test_generate_html_includes_node_shapes(store_with_data, tmp_path):
+    """Generated HTML should use d3.symbol() for distinct node shapes."""
+    from code_review_graph.visualization import generate_html
+
+    output_path = tmp_path / "graph.html"
+    generate_html(store_with_data, output_path)
+    content = output_path.read_text()
+    assert "d3.symbol()" in content or "symbolCircle" in content
+    assert "symbolSquare" in content
+    assert "symbolTriangle" in content
+    assert "symbolDiamond" in content
+    assert "symbolCross" in content

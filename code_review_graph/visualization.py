@@ -323,6 +323,50 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   .filter-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; user-select: none; }
   .filter-item input { accent-color: #58a6ff; cursor: pointer; }
+  :focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+  .filter-item:focus-within { outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 4px; }
+  #help-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+  #help-overlay.hidden { display: none; }
+  .help-content {
+    position: relative; background: #161b22; border: 1px solid #30363d;
+    border-radius: 12px; padding: 28px 32px; max-width: 420px; width: 90%;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  }
+  .help-content h2 { font-size: 16px; color: #e6edf3; margin-bottom: 16px; }
+  .help-content .help-close { position: absolute; top: 12px; right: 14px; }
+  .help-content table { width: 100%; border-collapse: collapse; }
+  .help-content td { padding: 6px 8px; color: #c9d1d9; font-size: 13px; border-bottom: 1px solid #21262d; }
+  .help-content td:first-child { white-space: nowrap; width: 1%; }
+  kbd {
+    display: inline-block; background: #21262d; border: 1px solid #30363d;
+    border-radius: 5px; padding: 2px 7px; font-size: 11px; font-family: inherit;
+    color: #e6edf3; box-shadow: inset 0 -1px 0 #0d1117; line-height: 1.6;
+  }
+  #loading-overlay {
+    position: fixed; inset: 0; display: flex; align-items: center;
+    justify-content: center; z-index: 50; background: rgba(13,17,23,0.85);
+    backdrop-filter: blur(6px); transition: opacity 0.4s ease;
+  }
+  #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+  .loading-spinner {
+    width: 36px; height: 36px; border: 3px solid #30363d;
+    border-top-color: #58a6ff; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { color: #9eaab6; font-size: 13px; margin-top: 14px; text-align: center; }
+  #empty-state {
+    position: fixed; inset: 0; display: none; align-items: center;
+    justify-content: center; z-index: 50; flex-direction: column; gap: 12px;
+  }
+  #empty-state.visible { display: flex; }
+  .empty-icon { font-size: 48px; opacity: 0.4; }
+  .empty-title { color: #e6edf3; font-size: 18px; font-weight: 600; }
+  .empty-desc { color: #9eaab6; font-size: 13px; max-width: 320px; text-align: center; line-height: 1.6; }
   marker { overflow: visible; }
   g.node-g:focus { outline: none; }
   g.node-g:focus-visible .node-shape { stroke: #58a6ff !important; stroke-width: 3 !important; }
@@ -367,11 +411,36 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   <button id="btn-community" title="Toggle community coloring" aria-label="Toggle community coloring" aria-pressed="false">Communities</button>
   <button id="btn-fit" title="Fit to screen" aria-label="Fit graph to screen">Fit</button>
   <button id="btn-labels" title="Toggle labels" class="active" aria-label="Toggle node labels" aria-pressed="true">Labels</button>
+  <button id="btn-help" title="Keyboard shortcuts" aria-label="Show keyboard shortcuts">?</button>
 </div>
 <div id="search-results" role="listbox" aria-label="Search results"></div>
-<div id="detail-panel" role="dialog" aria-label="Node details"><button class="dp-close" aria-label="Close detail panel">&times;</button><div id="dp-content" tabindex="-1"></div></div>
+<div id="detail-panel" role="dialog" aria-label="Node detail" aria-modal="false"><button class="dp-close" aria-label="Close detail panel">&times;</button><div id="dp-content" tabindex="-1"></div></div>
 <div id="stats-bar" role="status" aria-label="Graph statistics"></div>
 <div id="tooltip" role="tooltip" aria-live="polite"></div>
+<div id="help-overlay" class="hidden" role="dialog" aria-label="Keyboard shortcuts" aria-modal="true">
+  <div class="help-content">
+    <h2>Keyboard Shortcuts</h2>
+    <button class="dp-close help-close" aria-label="Close help">&times;</button>
+    <table>
+      <tr><td><kbd>/</kbd></td><td>Focus search</td></tr>
+      <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Close panel / search / help</td></tr>
+      <tr><td><kbd>Enter</kbd> / <kbd>Space</kbd></td><td>Activate focused node</td></tr>
+      <tr><td><kbd>Arrow keys</kbd></td><td>Navigate between nodes</td></tr>
+    </table>
+  </div>
+</div>
+<div id="loading-overlay" aria-live="polite">
+  <div>
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Laying out graph&hellip;</div>
+  </div>
+</div>
+<div id="empty-state" role="status">
+  <div class="empty-icon">&#x1F50D;</div>
+  <div class="empty-title">No nodes to display</div>
+  <div class="empty-desc">The graph is empty. Run <strong>code-review-graph build</strong> to index your codebase, then regenerate the visualization.</div>
+</div>
 <svg role="img" aria-label="Interactive code knowledge graph visualization. Use search to find nodes, click files to expand."></svg>
 <script>
 "use strict";
@@ -689,7 +758,16 @@ function fitGraph() {
   var tx = W/2 - (b.x + b.width/2)*s, ty = H/2 - (b.y + b.height/2)*s;
   svg.transition().duration(600).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(s));
 }
-simulation.on("end", fitGraph);
+var loadingOverlay = document.getElementById("loading-overlay");
+var emptyState = document.getElementById("empty-state");
+if (nodes.length === 0) {
+  loadingOverlay.classList.add("hidden");
+  emptyState.classList.add("visible");
+}
+simulation.on("end", function() {
+  loadingOverlay.classList.add("hidden");
+  fitGraph();
+});
 function zoomToNode(qn) {
   var nd = nodeById.get(qn);
   if (!nd || nd.x == null) return;
@@ -804,9 +882,7 @@ function showDetailPanel(d) {
   dpContent.textContent = "";
   dpContent.insertAdjacentHTML("beforeend", h);
   detailPanel.classList.add("visible");
-  var firstFocusable = dpContent.querySelector("li, button, a");
-  if (firstFocusable) firstFocusable.focus();
-  else dpContent.focus();
+  detailPanel.querySelector(".dp-close").focus();
   dpContent.querySelectorAll("li[data-qn]").forEach(function(li) {
     li.addEventListener("click", function() {
       var qn = li.dataset.qn;
@@ -911,6 +987,42 @@ function applySearchFilter() {
     return (matched.has(s) || matched.has(t)) ? eStyle(e).opacity : 0.02;
   });
 }
+var helpOverlay = document.getElementById("help-overlay");
+function toggleHelp() {
+  helpOverlay.classList.toggle("hidden");
+  if (!helpOverlay.classList.contains("hidden")) {
+    helpOverlay.querySelector(".help-close").focus();
+  }
+}
+document.getElementById("btn-help").addEventListener("click", toggleHelp);
+helpOverlay.querySelector(".help-close").addEventListener("click", toggleHelp);
+helpOverlay.addEventListener("click", function(ev) {
+  if (ev.target === helpOverlay) toggleHelp();
+});
+document.addEventListener("keydown", function(ev) {
+  var tag = (ev.target.tagName || "").toLowerCase();
+  var inInput = tag === "input" || tag === "textarea" || tag === "select" || ev.target.isContentEditable;
+  if (ev.key === "Escape") {
+    if (detailPanel.classList.contains("visible")) {
+      detailPanel.classList.remove("visible");
+      if (detailTrigger) detailTrigger.focus();
+    } else if (searchResults.style.display === "block") {
+      searchResults.style.display = "none";
+      searchInput.focus();
+    } else if (!helpOverlay.classList.contains("hidden")) {
+      toggleHelp();
+    }
+    return;
+  }
+  if (inInput) return;
+  if (ev.key === "/") {
+    ev.preventDefault();
+    searchInput.focus();
+  } else if (ev.key === "?") {
+    ev.preventDefault();
+    toggleHelp();
+  }
+});
 </script>
 </body>
 </html>
