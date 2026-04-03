@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://code-review-graph.com"><img src="https://img.shields.io/badge/website-code--review--graph.com-blue?style=flat-square" alt="Website"></a>
   <a href="https://github.com/tirth8205/code-review-graph/stargazers"><img src="https://img.shields.io/github/stars/tirth8205/code-review-graph?style=flat-square" alt="Stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="MIT Licence"></a>
   <a href="https://github.com/tirth8205/code-review-graph/actions/workflows/ci.yml"><img src="https://github.com/tirth8205/code-review-graph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -15,7 +16,7 @@
 
 <br>
 
-Claude Code re-reads your entire codebase on every task. `code-review-graph` fixes that. It builds a structural map of your code with [Tree-sitter](https://tree-sitter.github.io/tree-sitter/), tracks changes incrementally, and gives Claude precise context so it reads only what matters.
+AI coding tools re-read your entire codebase on every task. `code-review-graph` fixes that. It builds a structural map of your code with [Tree-sitter](https://tree-sitter.github.io/tree-sitter/), tracks changes incrementally, and gives your AI assistant precise context via [MCP](https://modelcontextprotocol.io/) so it reads only what matters.
 
 <p align="center">
   <img src="diagrams/diagram1_before_vs_after.png" alt="The Token Problem: 8.2x average token reduction across 6 real repositories" width="85%" />
@@ -31,7 +32,11 @@ code-review-graph install          # auto-detects and configures all supported p
 code-review-graph build            # parse your codebase
 ```
 
-One command sets up everything. `install` detects which AI coding tools you have and writes the correct MCP configuration for each one. It auto-detects whether you installed via `uvx` or `pip`/`pipx` and generates the right config. Restart your editor/tool after installing.
+One command sets up everything. `install` detects which AI coding tools you have, writes the correct MCP configuration for each one, and injects graph-aware instructions into your platform rules. It auto-detects whether you installed via `uvx` or `pip`/`pipx` and generates the right config. Restart your editor/tool after installing.
+
+<p align="center">
+  <img src="diagrams/diagram8_supported_platforms.png" alt="One Install, Every Platform: auto-detects Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, and Antigravity" width="85%" />
+</p>
 
 To target a specific platform:
 
@@ -41,18 +46,6 @@ code-review-graph install --platform claude-code  # configure only Claude Code
 ```
 
 Requires Python 3.10+. For the best experience, install [uv](https://docs.astral.sh/uv/) (the MCP config will use `uvx` if available, otherwise falls back to the `code-review-graph` command directly).
-
-### Supported Platforms
-
-| Platform | Config file | Auto-detected |
-|----------|-------------|:---:|
-| **Claude Code** | `.mcp.json` | Yes |
-| **Cursor** | `.cursor/mcp.json` | Yes |
-| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | Yes |
-| **Zed** | Zed settings.json | Yes |
-| **Continue** | `~/.continue/config.json` | Yes |
-| **OpenCode** | `.opencode.json` | Yes |
-| **Antigravity** | `~/.gemini/antigravity/mcp_config.json` | Yes |
 
 Then open your project and ask your AI assistant:
 
@@ -66,27 +59,25 @@ The initial build takes ~10 seconds for a 500-file project. After that, the grap
 
 ## How It Works
 
-Your repository is parsed into an AST with Tree-sitter, stored as a graph of nodes (functions, classes, imports) and edges (calls, inheritance, test coverage), then queried at review time to compute the minimal set of files Claude needs to read.
+<p align="center">
+  <img src="diagrams/diagram7_mcp_integration_flow.png" alt="How your AI assistant uses the graph: User asks for review, AI checks MCP tools, graph returns blast radius and risk scores, AI reads only what matters" width="80%" />
+</p>
+
+Your repository is parsed into an AST with Tree-sitter, stored as a graph of nodes (functions, classes, imports) and edges (calls, inheritance, test coverage), then queried at review time to compute the minimal set of files your AI assistant needs to read.
 
 <p align="center">
   <img src="diagrams/diagram2_architecture_pipeline.png" alt="Architecture pipeline: Repository to Tree-sitter Parser to SQLite Graph to Blast Radius to Minimal Review Set" width="100%" />
 </p>
 
-<details>
-<summary><strong>Blast-radius analysis</strong></summary>
-<br>
+### Blast-radius analysis
 
-When a file changes, the graph traces every caller, dependent, and test that could be affected. This is the "blast radius" of the change. Claude reads only these files instead of scanning the whole project.
+When a file changes, the graph traces every caller, dependent, and test that could be affected. This is the "blast radius" of the change. Your AI reads only these files instead of scanning the whole project.
 
 <p align="center">
   <img src="diagrams/diagram3_blast_radius.png" alt="Blast radius visualization showing how a change to login() propagates to callers, dependents, and tests" width="70%" />
 </p>
 
-</details>
-
-<details>
-<summary><strong>Incremental updates in &lt; 2 seconds</strong></summary>
-<br>
+### Incremental updates in < 2 seconds
 
 On every git commit or file save, a hook fires. The graph diffs changed files, finds their dependents via SHA-256 hash checks, and re-parses only what changed. A 2,900-file project re-indexes in under 2 seconds.
 
@@ -94,23 +85,29 @@ On every git commit or file save, a hook fires. The graph diffs changed files, f
   <img src="diagrams/diagram4_incremental_update.png" alt="Incremental update flow: git commit triggers diff, finds dependents, re-parses only 5 files while 2,910 are skipped" width="90%" />
 </p>
 
-</details>
+### The monorepo problem, solved
 
-<details>
-<summary><strong>19 supported languages + Jupyter notebooks</strong></summary>
-<br>
+Large monorepos are where token waste is most painful. The graph cuts through the noise — 27,700+ files excluded from review context, only ~15 files actually read.
 
-Python, TypeScript/TSX, JavaScript, Vue, Go, Rust, Java, Scala, C#, Ruby, Kotlin, Swift, PHP, Solidity, C/C++, Dart, R, Perl, Lua
+<p align="center">
+  <img src="diagrams/diagram6_monorepo_funnel.png" alt="Next.js monorepo: 27,732 files funnelled through code-review-graph down to ~15 files — 49x fewer tokens" width="80%" />
+</p>
 
-Plus Jupyter/Databricks notebook parsing (`.ipynb`) with multi-language cell support (Python, R, SQL), and Perl XS files (`.xs`, parsed as C).
+### 19 languages + Jupyter notebooks
 
-Each language has full Tree-sitter grammar support for functions, classes, imports, call sites, inheritance, and test detection.
+<p align="center">
+  <img src="diagrams/diagram9_language_coverage.png" alt="19 languages organized by category: Web, Backend, Systems, Mobile, Scripting, plus Jupyter/Databricks notebook support" width="90%" />
+</p>
 
-</details>
+Full Tree-sitter grammar support for functions, classes, imports, call sites, inheritance, and test detection in every language. Plus Jupyter/Databricks notebook parsing (`.ipynb`) with multi-language cell support (Python, R, SQL), and Perl XS files (`.xs`).
 
 ---
 
 ## Benchmarks
+
+<p align="center">
+  <img src="diagrams/diagram5_benchmark_board.png" alt="Benchmarks across real repos: 4.9x to 27.3x fewer tokens, higher review quality" width="85%" />
+</p>
 
 All numbers come from the automated evaluation runner against 6 real open-source repositories (13 commits total). Reproduce with `code-review-graph eval --all`. Raw data in [`evaluate/reports/summary.md`](evaluate/reports/summary.md).
 
@@ -179,6 +176,30 @@ The blast-radius analysis never misses an actually impacted file (perfect recall
 
 ---
 
+## Features
+
+| Feature | Details |
+|---------|---------|
+| **Incremental updates** | Re-parses only changed files. Subsequent updates complete in under 2 seconds. |
+| **19 languages + notebooks** | Python, TypeScript/TSX, JavaScript, Vue, Go, Rust, Java, Scala, C#, Ruby, Kotlin, Swift, PHP, Solidity, C/C++, Dart, R, Perl, Lua, Jupyter/Databricks (.ipynb) |
+| **Blast-radius analysis** | Shows exactly which functions, classes, and files are affected by any change |
+| **Auto-update hooks** | Graph updates on every file edit and git commit without manual intervention |
+| **Semantic search** | Optional vector embeddings via sentence-transformers, Google Gemini, or MiniMax |
+| **Interactive visualisation** | D3.js force-directed graph with edge-type toggles and search |
+| **Local storage** | SQLite file in `.code-review-graph/`. No external database, no cloud dependency. |
+| **Watch mode** | Continuous graph updates as you work |
+| **Execution flows** | Trace call chains from entry points, sorted by criticality |
+| **Community detection** | Cluster related code via Leiden algorithm or file grouping |
+| **Architecture overview** | Auto-generated architecture map with coupling warnings |
+| **Risk-scored reviews** | `detect_changes` maps diffs to affected functions, flows, and test gaps |
+| **Refactoring tools** | Rename preview, dead code detection, community-driven suggestions |
+| **Wiki generation** | Auto-generate markdown wiki from community structure |
+| **Multi-repo registry** | Register multiple repos, search across all of them |
+| **MCP prompts** | 5 workflow templates: review, architecture, debug, onboard, pre-merge |
+| **Full-text search** | FTS5-powered hybrid search combining keyword and vector similarity |
+
+---
+
 ## Usage
 
 <details>
@@ -217,10 +238,10 @@ code-review-graph serve            # Start MCP server
 </details>
 
 <details>
-<summary><strong>MCP tools</strong></summary>
+<summary><strong>22 MCP tools</strong></summary>
 <br>
 
-Claude uses these automatically once the graph is built.
+Your AI assistant uses these automatically once the graph is built.
 
 | Tool | Description |
 |------|-------------|
@@ -251,30 +272,6 @@ Claude uses these automatically once the graph is built.
 `review_changes`, `architecture_map`, `debug_issue`, `onboard_developer`, `pre_merge_check`
 
 </details>
-
----
-
-## Features
-
-| Feature | Details |
-|---------|---------|
-| **Incremental updates** | Re-parses only changed files. Subsequent updates complete in under 2 seconds. |
-| **19 languages + notebooks** | Python, TypeScript/TSX, JavaScript, Vue, Go, Rust, Java, Scala, C#, Ruby, Kotlin, Swift, PHP, Solidity, C/C++, Dart, R, Perl, Lua, Jupyter/Databricks (.ipynb) |
-| **Blast-radius analysis** | Shows exactly which functions, classes, and files are affected by any change |
-| **Auto-update hooks** | Graph updates on every file edit and git commit without manual intervention |
-| **Semantic search** | Optional vector embeddings via sentence-transformers, Google Gemini, or MiniMax |
-| **Interactive visualisation** | D3.js force-directed graph with edge-type toggles and search |
-| **Local storage** | SQLite file in `.code-review-graph/`. No external database, no cloud dependency. |
-| **Watch mode** | Continuous graph updates as you work |
-| **Execution flows** | Trace call chains from entry points, sorted by criticality |
-| **Community detection** | Cluster related code via Leiden algorithm or file grouping |
-| **Architecture overview** | Auto-generated architecture map with coupling warnings |
-| **Risk-scored reviews** | `detect_changes` maps diffs to affected functions, flows, and test gaps |
-| **Refactoring tools** | Rename preview, dead code detection, community-driven suggestions |
-| **Wiki generation** | Auto-generate markdown wiki from community structure |
-| **Multi-repo registry** | Register multiple repos, search across all of them |
-| **MCP prompts** | 5 workflow templates: review, architecture, debug, onboard, pre-merge |
-| **Full-text search** | FTS5-powered hybrid search combining keyword and vector similarity |
 
 <details>
 <summary><strong>Configuration</strong></summary>
@@ -328,6 +325,7 @@ MIT. See [LICENSE](LICENSE).
 
 <p align="center">
 <br>
+<a href="https://code-review-graph.com">code-review-graph.com</a><br><br>
 <code>pip install code-review-graph && code-review-graph install</code><br>
-<sub>Works with Claude Code, Cursor, Windsurf, Zed, Continue, and OpenCode</sub>
+<sub>Works with Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, and Antigravity</sub>
 </p>
