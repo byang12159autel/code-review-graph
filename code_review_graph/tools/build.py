@@ -36,6 +36,7 @@ def _run_postprocess(
     # -- Signatures + FTS (fast, always run unless "none") --
     try:
         rows = store.get_nodes_without_signature()
+        sig_updates: list[tuple[str, int]] = []
         for row in rows:
             node_id, name, kind, params, ret = (
                 row[0], row[1], row[2], row[3], row[4],
@@ -48,7 +49,11 @@ def _run_postprocess(
                 sig = f"class {name}"
             else:
                 sig = name
-            store.update_node_signature(node_id, sig[:512])
+            sig_updates.append((sig[:512], node_id))
+        if sig_updates:
+            store._conn.executemany(
+                "UPDATE nodes SET signature = ? WHERE id = ?", sig_updates,
+            )
         store.commit()
         build_result["signatures_updated"] = True
     except (sqlite3.OperationalError, TypeError, KeyError) as e:
@@ -56,9 +61,14 @@ def _run_postprocess(
         warnings.append(f"Signature computation failed: {type(e).__name__}: {e}")
 
     try:
-        from code_review_graph.search import rebuild_fts_index
+        if not full_rebuild and changed_files:
+            from code_review_graph.search import update_fts_index
 
-        fts_count = rebuild_fts_index(store)
+            fts_count = update_fts_index(store, changed_files)
+        else:
+            from code_review_graph.search import rebuild_fts_index
+
+            fts_count = rebuild_fts_index(store)
         build_result["fts_indexed"] = fts_count
         build_result["fts_rebuilt"] = True
     except (sqlite3.OperationalError, ImportError) as e:
@@ -171,100 +181,109 @@ def _compute_summaries(store: Any) -> None:
     except sqlite3.OperationalError:
         pass  # Table may not exist yet
 
-    # -- flow_snapshots --
+    # -- flow_snapshots (batch: pre-load node names instead of per-id lookups) --
     try:
         conn.execute("DELETE FROM flow_snapshots")
         rows = conn.execute(
             "SELECT id, name, entry_point_id, criticality, node_count, "
             "file_count, path_json FROM flows"
         ).fetchall()
+
+        # Pre-load all node id -> (name, qualified_name) in one query
+        node_lookup: dict[int, tuple[str, str]] = {}
+        for nr in conn.execute(
+            "SELECT id, name, qualified_name FROM nodes"
+        ).fetchall():
+            node_lookup[nr[0]] = (nr[1], nr[2])
+
+        snapshot_rows: list[tuple] = []
         for r in rows:
-            fid = r[0]
-            fname = r[1]
-            ep_id = r[2]
-            crit = r[3]
-            ncount = r[4]
-            fcount = r[5]
-            # Get entry point name
-            ep_row = conn.execute(
-                "SELECT qualified_name FROM nodes WHERE id = ?", (ep_id,),
-            ).fetchone()
-            ep_name = ep_row[0] if ep_row else str(ep_id)
-            # Compress path to entry + top 3 intermediate + exit
+            fid, fname, ep_id = r[0], r[1], r[2]
+            crit, ncount, fcount = r[3], r[4], r[5]
+            ep_info = node_lookup.get(ep_id)
+            ep_name = ep_info[1] if ep_info else str(ep_id)
             path_ids = _json.loads(r[6]) if r[6] else []
-            critical_path = []
+            critical_path: list[str] = []
             if path_ids:
                 critical_path.append(ep_name)
                 if len(path_ids) > 2:
-                    # Pick up to 3 intermediate nodes
                     for nid in path_ids[1:4]:
-                        nr = conn.execute(
-                            "SELECT name FROM nodes WHERE id = ?", (nid,),
-                        ).fetchone()
-                        if nr:
-                            critical_path.append(nr[0])
+                        ni = node_lookup.get(nid)
+                        if ni:
+                            critical_path.append(ni[0])
                 if len(path_ids) > 1:
-                    last = conn.execute(
-                        "SELECT name FROM nodes WHERE id = ?",
-                        (path_ids[-1],),
-                    ).fetchone()
-                    if last and last[0] not in critical_path:
-                        critical_path.append(last[0])
-            conn.execute(
+                    li = node_lookup.get(path_ids[-1])
+                    if li and li[0] not in critical_path:
+                        critical_path.append(li[0])
+            snapshot_rows.append((
+                fid, fname, ep_name, _json.dumps(critical_path),
+                crit, ncount, fcount,
+            ))
+
+        if snapshot_rows:
+            conn.executemany(
                 "INSERT OR REPLACE INTO flow_snapshots "
                 "(flow_id, name, entry_point, critical_path, criticality, "
                 "node_count, file_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (fid, fname, ep_name, _json.dumps(critical_path),
-                 crit, ncount, fcount),
+                snapshot_rows,
             )
     except sqlite3.OperationalError:
         pass
 
-    # -- risk_index --
+    # -- risk_index (batch: 2 aggregate queries instead of 2N per-node queries) --
     try:
         conn.execute("DELETE FROM risk_index")
-        # Per-node risk: caller_count, test coverage, security keywords
         nodes = conn.execute(
             "SELECT id, qualified_name, name FROM nodes "
             "WHERE kind IN ('Function', 'Class', 'Test')"
         ).fetchall()
+
+        # Pre-compute caller counts in one query
+        caller_counts: dict[str, int] = {}
+        for r in conn.execute(
+            "SELECT target_qualified, COUNT(*) FROM edges "
+            "WHERE kind = 'CALLS' GROUP BY target_qualified"
+        ).fetchall():
+            caller_counts[r[0]] = r[1]
+
+        # Pre-compute test coverage in one query
+        tested_set: set[str] = set()
+        for r in conn.execute(
+            "SELECT DISTINCT source_qualified FROM edges "
+            "WHERE kind = 'TESTED_BY'"
+        ).fetchall():
+            tested_set.add(r[0])
+
         security_kw = {
             "auth", "login", "password", "token", "session", "crypt",
             "secret", "credential", "permission", "sql", "execute",
         }
+        risk_rows: list[tuple] = []
         for n in nodes:
             nid, qn, name = n[0], n[1], n[2]
-            # Count callers
-            caller_count = conn.execute(
-                "SELECT COUNT(*) FROM edges WHERE target_qualified = ? "
-                "AND kind = 'CALLS'", (qn,),
-            ).fetchone()[0]
-            # Test coverage
-            tested = conn.execute(
-                "SELECT COUNT(*) FROM edges WHERE source_qualified = ? "
-                "AND kind = 'TESTED_BY'", (qn,),
-            ).fetchone()[0]
-            coverage = "tested" if tested > 0 else "untested"
-            # Security relevance
+            cc = caller_counts.get(qn, 0)
+            coverage = "tested" if qn in tested_set else "untested"
             name_lower = name.lower()
             sec_relevant = 1 if any(kw in name_lower for kw in security_kw) else 0
-            # Compute risk score
             risk = 0.0
-            if caller_count > 10:
+            if cc > 10:
                 risk += 0.3
-            elif caller_count > 3:
+            elif cc > 3:
                 risk += 0.15
             if coverage == "untested":
                 risk += 0.3
             if sec_relevant:
                 risk += 0.4
             risk = min(risk, 1.0)
-            conn.execute(
+            risk_rows.append((nid, qn, risk, cc, coverage, sec_relevant))
+
+        if risk_rows:
+            conn.executemany(
                 "INSERT OR REPLACE INTO risk_index "
                 "(node_id, qualified_name, risk_score, caller_count, "
                 "test_coverage, security_relevant, last_computed) "
                 "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
-                (nid, qn, risk, caller_count, coverage, sec_relevant),
+                risk_rows,
             )
     except sqlite3.OperationalError:
         pass
@@ -372,6 +391,7 @@ def run_postprocess(
         # Signatures are always fast — run them
         try:
             rows = store.get_nodes_without_signature()
+            sig_updates: list[tuple[str, int]] = []
             for row in rows:
                 node_id, name, kind, params, ret = (
                     row[0], row[1], row[2], row[3], row[4],
@@ -384,7 +404,11 @@ def run_postprocess(
                     sig = f"class {name}"
                 else:
                     sig = name
-                store.update_node_signature(node_id, sig[:512])
+                sig_updates.append((sig[:512], node_id))
+            if sig_updates:
+                store._conn.executemany(
+                    "UPDATE nodes SET signature = ? WHERE id = ?", sig_updates,
+                )
             store.commit()
             result["signatures_updated"] = True
         except (sqlite3.OperationalError, TypeError, KeyError) as e:

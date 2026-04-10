@@ -27,13 +27,68 @@ AI coding tools re-read your entire codebase on every task. `code-review-graph` 
 
 ## Quick Start
 
+### Claude Code
+
 ```bash
-pip install code-review-graph                     # or: pipx install code-review-graph
-code-review-graph install          # auto-detects and configures all supported platforms
-code-review-graph build            # parse your codebase
+# 1. In your project directory, register the MCP server
+claude mcp add code-review-graph -- uvx code-review-graph serve
+
+# 2. Build the graph
+uvx code-review-graph build
 ```
 
-One command sets up everything. `install` detects which AI coding tools you have, writes the correct MCP configuration for each one, and injects graph-aware instructions into your platform rules. It auto-detects whether you installed via `uvx` or `pip`/`pipx` and generates the right config. Restart your editor/tool after installing.
+That's it. Restart Claude Code and the 22 graph tools are available.
+
+<details>
+<summary><strong>Full setup with hooks and CLAUDE.md instructions</strong></summary>
+<br>
+
+The `install` command can also inject graph-aware instructions into `CLAUDE.md` and set up auto-update hooks:
+
+```bash
+pip install code-review-graph                          # or: pipx install code-review-graph
+code-review-graph install --platform claude-code       # configures CLAUDE.md + hooks
+code-review-graph build                                # parse your codebase
+```
+
+This does three things beyond registering the MCP server:
+- Injects "use graph tools before Grep/Glob" instructions into your `CLAUDE.md`
+- Sets up hooks in `.claude/settings.json` so the graph auto-updates after file edits
+- Generates skill files in `.claude/skills/`
+
+> **Note:** The auto-generated hooks in `.claude/settings.json` may use the wrong schema format, which prevents Claude Code from starting ([#201](https://github.com/tirth8205/code-review-graph/issues/201)). If this happens, fix the hooks to use the correct format:
+> ```json
+> {
+>   "hooks": {
+>     "PostToolUse": [
+>       {
+>         "matcher": "Edit|Write|Bash",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "code-review-graph update --skip-flows",
+>             "timeout": 5000
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+
+</details>
+
+**Verify it's working:** After restarting Claude Code, type `/mcp` — you should see `code-review-graph · ✔ connected`. Then ask Claude to `use semantic_search_nodes to find <some class>`.
+
+> **Troubleshooting:** If `/mcp` shows "No MCP servers configured", the `.mcp.json` file may not be getting picked up. Use `claude mcp add` instead (shown above). If the server was previously disabled, check `~/.claude/settings.local.json` for `"disabledMcpjsonServers": ["code-review-graph"]` and clear that array.
+
+### Other Platforms
+
+```bash
+pip install code-review-graph
+code-review-graph install            # auto-detects all supported platforms
+code-review-graph build
+```
 
 <p align="center">
   <img src="diagrams/diagram8_supported_platforms.png" alt="One Install, Every Platform: auto-detects Claude Code, Cursor, Windsurf, Zed, Continue, OpenCode, and Antigravity" width="85%" />
@@ -47,12 +102,6 @@ code-review-graph install --platform claude-code  # configure only Claude Code
 ```
 
 Requires Python 3.10+. For the best experience, install [uv](https://docs.astral.sh/uv/) (the MCP config will use `uvx` if available, otherwise falls back to the `code-review-graph` command directly).
-
-Then open your project and ask your AI assistant:
-
-```
-Build the code review graph for this project
-```
 
 The initial build takes ~10 seconds for a 500-file project. After that, the graph updates automatically on every file edit and git commit.
 

@@ -58,6 +58,54 @@ def rebuild_fts_index(store: GraphStore) -> int:
     return count
 
 
+def update_fts_index(store: GraphStore, changed_files: list[str]) -> int:
+    """Incrementally update the FTS5 index for *changed_files* only.
+
+    Falls back to a full rebuild if the FTS table does not exist yet.
+
+    Returns:
+        Total number of rows in the FTS index after the update.
+    """
+    conn = store._conn
+
+    # Check if FTS table exists; if not, do a full rebuild.
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='nodes_fts'"
+    ).fetchone()
+    if not exists:
+        return rebuild_fts_index(store)
+
+    if not changed_files:
+        return conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0]
+
+    # Delete stale FTS rows for nodes in the changed files.
+    for fp in changed_files:
+        rows = conn.execute(
+            "SELECT id FROM nodes WHERE file_path = ?", (fp,)
+        ).fetchall()
+        if rows:
+            ids = [r[0] for r in rows]
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(  # nosec B608
+                f"DELETE FROM nodes_fts WHERE rowid IN ({placeholders})", ids,
+            )
+
+    # Re-insert current nodes for changed files.
+    for fp in changed_files:
+        conn.execute(
+            "INSERT INTO nodes_fts(rowid, name, qualified_name, file_path, signature) "
+            "SELECT id, name, qualified_name, file_path, COALESCE(signature, '') "
+            "FROM nodes WHERE file_path = ?",
+            (fp,),
+        )
+    conn.commit()
+
+    count = conn.execute("SELECT count(*) FROM nodes_fts").fetchone()[0]
+    logger.info("FTS index updated (%d changed files): %d rows indexed",
+                len(changed_files), count)
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Query kind boosting heuristics
 # ---------------------------------------------------------------------------

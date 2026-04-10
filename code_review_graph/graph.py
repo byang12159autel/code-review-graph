@@ -235,14 +235,62 @@ class GraphStore:
     def store_file_nodes_edges(
         self, file_path: str, nodes: list[NodeInfo], edges: list[EdgeInfo], fhash: str = ""
     ) -> None:
-        """Atomically replace all data for a file."""
+        """Atomically replace all data for a file.
+
+        Uses batch inserts (executemany) instead of per-item upserts for
+        significantly better performance.  Because ``remove_file_data``
+        deletes all existing rows for *file_path* first, the inserts are
+        always into a clean slate — no ON CONFLICT logic is needed.
+        """
+        # Flush any implicit transaction so BEGIN IMMEDIATE doesn't nest.
+        try:
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             self.remove_file_data(file_path)
-            for node in nodes:
-                self.upsert_node(node, file_hash=fhash)
-            for edge in edges:
-                self.upsert_edge(edge)
+
+            # -- batch insert nodes --
+            now = time.time()
+            if nodes:
+                node_rows = []
+                for node in nodes:
+                    qualified = self._make_qualified(node)
+                    extra = json.dumps(node.extra) if node.extra else "{}"
+                    node_rows.append((
+                        node.kind, node.name, qualified, node.file_path,
+                        node.line_start, node.line_end, node.language,
+                        node.parent_name, node.params, node.return_type,
+                        node.modifiers, int(node.is_test), fhash, extra, now,
+                    ))
+                self._conn.executemany(
+                    """INSERT INTO nodes
+                       (kind, name, qualified_name, file_path, line_start,
+                        line_end, language, parent_name, params, return_type,
+                        modifiers, is_test, file_hash, extra, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    node_rows,
+                )
+
+            # -- batch insert edges --
+            if edges:
+                edge_rows = []
+                for edge in edges:
+                    extra = json.dumps(edge.extra) if edge.extra else "{}"
+                    edge_rows.append((
+                        edge.kind, edge.source, edge.target,
+                        edge.file_path, edge.line, extra, now,
+                    ))
+                self._conn.executemany(
+                    """INSERT INTO edges
+                       (kind, source_qualified, target_qualified,
+                        file_path, line, extra, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    edge_rows,
+                )
+
             self._conn.commit()
         except BaseException:
             self._conn.rollback()
@@ -935,6 +983,62 @@ class GraphStore:
             ).fetchall()
             results.extend(self._row_to_node(r) for r in rows)
         return results
+
+    def get_nodes_by_ids(self, node_ids: list[int]) -> list[GraphNode]:
+        """Batch-fetch nodes by integer primary key."""
+        if not node_ids:
+            return []
+        results: list[GraphNode] = []
+        batch_size = 450
+        for i in range(0, len(node_ids), batch_size):
+            batch = node_ids[i:i + batch_size]
+            placeholders = ",".join("?" for _ in batch)
+            rows = self._conn.execute(  # nosec B608
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})",
+                batch,
+            ).fetchall()
+            results.extend(self._row_to_node(r) for r in rows)
+        return results
+
+    def get_edges_by_sources(
+        self, qualified_names: list[str],
+    ) -> dict[str, list[GraphEdge]]:
+        """Batch-fetch outgoing edges for multiple source qualified names."""
+        result: dict[str, list[GraphEdge]] = {qn: [] for qn in qualified_names}
+        if not qualified_names:
+            return result
+        batch_size = 450
+        for i in range(0, len(qualified_names), batch_size):
+            batch = qualified_names[i:i + batch_size]
+            placeholders = ",".join("?" for _ in batch)
+            rows = self._conn.execute(  # nosec B608
+                f"SELECT * FROM edges WHERE source_qualified IN ({placeholders})",
+                batch,
+            ).fetchall()
+            for r in rows:
+                edge = self._row_to_edge(r)
+                result.setdefault(edge.source_qualified, []).append(edge)
+        return result
+
+    def get_edges_by_targets(
+        self, qualified_names: list[str],
+    ) -> dict[str, list[GraphEdge]]:
+        """Batch-fetch incoming edges for multiple target qualified names."""
+        result: dict[str, list[GraphEdge]] = {qn: [] for qn in qualified_names}
+        if not qualified_names:
+            return result
+        batch_size = 450
+        for i in range(0, len(qualified_names), batch_size):
+            batch = qualified_names[i:i + batch_size]
+            placeholders = ",".join("?" for _ in batch)
+            rows = self._conn.execute(  # nosec B608
+                f"SELECT * FROM edges WHERE target_qualified IN ({placeholders})",
+                batch,
+            ).fetchall()
+            for r in rows:
+                edge = self._row_to_edge(r)
+                result.setdefault(edge.target_qualified, []).append(edge)
+        return result
 
     # --- Internal helpers ---
 

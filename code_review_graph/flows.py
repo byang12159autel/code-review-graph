@@ -230,35 +230,42 @@ def compute_criticality(flow: dict, store: GraphStore) -> float:
       - Security sensitivity: 0.25
       - Test coverage gap:   0.15
       - Depth:               0.10
+
+    Uses batch queries to avoid N+1 per-node lookups.
     """
     node_ids: list[int] = flow.get("path", [])
     if not node_ids:
         return 0.0
 
-    # Resolve nodes once.
-    nodes: list[GraphNode] = []
-    for nid in node_ids:
-        n = store.get_node_by_id(nid)
-        if n:
-            nodes.append(n)
-
+    # Batch-resolve all nodes in one query.
+    nodes = store.get_nodes_by_ids(node_ids)
     if not nodes:
         return 0.0
 
+    qnames = [n.qualified_name for n in nodes]
+
+    # Batch-fetch all outgoing and incoming edges for these nodes.
+    out_edges = store.get_edges_by_sources(qnames)
+    in_edges = store.get_edges_by_targets(qnames)
+
+    # Collect all call targets to check which exist in the graph.
+    call_targets: set[str] = set()
+    for qn in qnames:
+        for e in out_edges.get(qn, []):
+            if e.kind == "CALLS":
+                call_targets.add(e.target_qualified)
+    # Batch-check which targets exist.
+    existing_targets: set[str] = set()
+    if call_targets:
+        existing_nodes = store._batch_get_nodes(call_targets)
+        existing_targets = {n.qualified_name for n in existing_nodes}
+
     # --- File spread (0.0 - 1.0) ---
     file_count = len({n.file_path for n in nodes})
-    # Normalize: 1 file => 0.0, 5+ files => 1.0
     file_spread = min((file_count - 1) / 4.0, 1.0) if file_count > 1 else 0.0
 
     # --- External calls (0.0 - 1.0) ---
-    # Calls that target nodes NOT in the graph are considered external.
-    external_count = 0
-    for n in nodes:
-        edges = store.get_edges_by_source(n.qualified_name)
-        for e in edges:
-            if e.kind == "CALLS" and store.get_node(e.target_qualified) is None:
-                external_count += 1
-    # Normalize: 0 => 0.0, 5+ => 1.0
+    external_count = len(call_targets - existing_targets)
     external_score = min(external_count / 5.0, 1.0)
 
     # --- Security sensitivity (0.0 - 1.0) ---
@@ -269,14 +276,13 @@ def compute_criticality(flow: dict, store: GraphStore) -> float:
         for kw in _SECURITY_KEYWORDS:
             if kw in name_lower or kw in qn_lower:
                 security_hits += 1
-                break  # Count each node at most once.
+                break
     security_score = min(security_hits / max(len(nodes), 1), 1.0)
 
     # --- Test coverage gap (0.0 - 1.0) ---
     tested_count = 0
     for n in nodes:
-        tested_edges = store.get_edges_by_target(n.qualified_name)
-        for te in tested_edges:
+        for te in in_edges.get(n.qualified_name, []):
             if te.kind == "TESTED_BY":
                 tested_count += 1
                 break
@@ -285,7 +291,6 @@ def compute_criticality(flow: dict, store: GraphStore) -> float:
 
     # --- Depth (0.0 - 1.0) ---
     depth = flow.get("depth", 0)
-    # Normalize: 0 => 0.0, 10+ => 1.0
     depth_score = min(depth / 10.0, 1.0)
 
     # --- Weighted sum ---

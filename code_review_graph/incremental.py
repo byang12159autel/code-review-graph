@@ -272,7 +272,10 @@ _MAX_DEPENDENT_FILES = 500
 
 
 def _single_hop_dependents(store: GraphStore, file_path: str) -> set[str]:
-    """Find files that directly depend on *file_path* (single hop)."""
+    """Find files that directly depend on *file_path* (single hop).
+
+    Uses batch edge lookup to avoid N+1 queries per node.
+    """
     dependents: set[str] = set()
     edges = store.get_edges_by_target(file_path)
     for e in edges:
@@ -280,10 +283,14 @@ def _single_hop_dependents(store: GraphStore, file_path: str) -> set[str]:
             dependents.add(e.file_path)
 
     nodes = store.get_nodes_by_file(file_path)
-    for node in nodes:
-        for e in store.get_edges_by_target(node.qualified_name):
-            if e.kind in ("CALLS", "IMPORTS_FROM", "INHERITS", "IMPLEMENTS"):
-                dependents.add(e.file_path)
+    if nodes:
+        qnames = [n.qualified_name for n in nodes]
+        relevant_kinds = {"CALLS", "IMPORTS_FROM", "INHERITS", "IMPLEMENTS"}
+        edges_by_target = store.get_edges_by_targets(qnames)
+        for target_edges in edges_by_target.values():
+            for e in target_edges:
+                if e.kind in relevant_kinds:
+                    dependents.add(e.file_path)
 
     dependents.discard(file_path)
     return dependents
@@ -542,7 +549,7 @@ def incremental_update(
 # ---------------------------------------------------------------------------
 
 
-_DEBOUNCE_SECONDS = 0.3
+_DEBOUNCE_SECONDS = float(os.environ.get("CRG_DEBOUNCE_SECONDS", "1.0"))
 
 
 def watch(repo_root: Path, store: GraphStore) -> None:
@@ -624,33 +631,43 @@ def watch(repo_root: Path, store: GraphStore) -> None:
                 self._pending.clear()
                 self._timer = None
 
+            updated = 0
             for abs_path in paths:
-                self._update_file(abs_path)
+                if self._update_file(abs_path):
+                    updated += 1
 
-        def _update_file(self, abs_path: str):
+            # Single commit for the entire batch instead of per-file.
+            if updated:
+                try:
+                    store.set_metadata(
+                        "last_updated", time.strftime("%Y-%m-%dT%H:%M:%S")
+                    )
+                    store.commit()
+                except Exception as e:
+                    logger.error("Error committing batch update: %s", e)
+
+        def _update_file(self, abs_path: str) -> bool:
             path = Path(abs_path)
             if not path.is_file():
-                return
+                return False
             if path.is_symlink():
-                return
+                return False
             if _is_binary(path):
-                return
+                return False
             try:
                 source = path.read_bytes()
                 fhash = hashlib.sha256(source).hexdigest()
                 nodes, edges = parser.parse_bytes(path, source)
                 store.store_file_nodes_edges(abs_path, nodes, edges, fhash)
-                store.set_metadata(
-                    "last_updated", time.strftime("%Y-%m-%dT%H:%M:%S")
-                )
-                store.commit()
                 rel = str(path.relative_to(repo_root))
                 logger.info(
                     "Updated: %s (%d nodes, %d edges)",
                     rel, len(nodes), len(edges),
                 )
+                return True
             except Exception as e:
                 logger.error("Error updating %s: %s", abs_path, e)
+                return False
 
     handler = GraphUpdateHandler()
     observer = Observer()
